@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"html/template"
+	"fmt"
 )
 
 var (
@@ -15,6 +16,9 @@ var (
 	freshes = []*FreshVal{}
 	tmpl = template.Must(template.New("rng-results").Parse(myhtml))
 )
+
+var web = flag.Bool("web", false, "serve results via webserver in browser")
+
 func main() {
 	flag.Parse()
 	name := flag.Arg(0)
@@ -55,17 +59,70 @@ func main() {
 		}
 	}
 
-    http.HandleFunc("/", handler)
-	log.Print("listening on localhost:8080")
-	if err := http.ListenAndServe(":8080", nil); err != nil {
-		log.Fatal(err)
+	fmt.Print("[")
+	for key, stale := range aggregateStale() {
+		v := &Printout{
+			File: stale[0].File,
+			RandType: "Stale",
+			FuncKey: key,
+		}
+		data, _ := json.Marshal(v)
+		fmt.Println(string(data), ",")
 	}
+	count := 0
+	aggFresh := aggregateFresh()
+	for key, fresh := range aggFresh {
+		v := &Printout{
+			File: fresh[0].File,
+			RandType: "Fresh",
+			FuncKey: key,
+		}
+		data, _ := json.Marshal(v)
+		count++
+		if count == len(aggFresh) {
+			fmt.Println(string(data), "]")
+		} else {
+			fmt.Println(string(data), ",")
+		}
+	}
+
+	if *web {
+		http.HandleFunc("/", handler)
+		log.Print("listening on localhost:7777")
+		if err := http.ListenAndServe(":7777", nil); err != nil {
+			log.Fatal(err)
+		}
+	}
+}
+
+type Printout struct {
+	File string
+	RandType string
+	FuncKey string
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	if err := tmpl.Execute(w, &TmplData{stales, freshes}); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func aggregateStale() map[string][]*StaleUse {
+	result := map[string][]*StaleUse{}
+	for _, v := range stales {
+		key := fmt.Sprintf("%v:%v:%v", v.File, v.StaleRandomVariable, v.RandomValueAssignmentLine)
+		result[key] = append(result[key], v)
+	}
+	return result
+}
+
+func aggregateFresh() map[string][]*FreshVal {
+	result := map[string][]*FreshVal{}
+	for _, v := range freshes {
+		key := fmt.Sprintf("%v:%v", v.File, v.RLine)
+		result[key] = append(result[key], v)
+	}
+	return result
 }
 
 type TmplData struct {
